@@ -1,31 +1,51 @@
 import functions_framework
 import investpy
-import datetime
-import json
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+import os
 import requests
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 @functions_framework.http
 def get_indicators(request):
-    now = datetime.datetime.now()
-    next_month = now.month % 12 + 1
-    year = now.year + (1 if next_month == 1 else 0)
-    start_date = f"01/{next_month:02d}/{year}"
-    end_date = f"28/{next_month:02d}/{year}" if next_month == 2 else f"30/{next_month:02d}/{year}"
+    start_date_dt = datetime.now()
+    end_date_dt = start_date_dt + timedelta(days=28)
+    print(start_date_dt)
+    print(end_date_dt)
 
     try:
-        df = investpy.economic_calendar(from_date=start_date, to_date=end_date, countries=['japan'])
+        df = investpy.economic_calendar(
+            from_date=start_date_dt.strftime("%d/%m/%Y"),
+            to_date=end_date_dt.strftime("%d/%m/%Y"),
+            countries=['japan']
+        )
+        filtered_df = df[df['importance'].isin(['high', 'medium'])]
+        print(filtered_df)
     except Exception as e:
         return f"Failed to fetch indicators: {str(e)}", 500
 
-    gas_url = "https://script.google.com/macros/s/あなたのデプロイURL/exec"
-    for _, row in df.iterrows():
-        data = {
+    gas_url = os.environ.get('GAS_WEBHOOK_URL')
+
+    params = {
+        'apiKey' : os.environ.get('API_KEY'),
+        'startDate': start_date_dt.strftime("%Y/%m/%d"),
+        'endDate': end_date_dt.strftime("%Y/%m/%d"),
+    }
+
+    data = []
+    for _, row in filtered_df.iterrows():
+        date_string = row['date'] + " " + row['time']
+        start_time = datetime.strptime(date_string, "%d/%m/%Y %H:%M")
+        end_time = start_time + timedelta(minutes=15)
+        data.append({
             "title": row['event'],
-            "date": row['date'],
-            "time": row['time'],
-            "importance": row['importance'],
-            "country": row['country']
-        }
-        requests.post(gas_url, json=data)
-    
+            "startTime": start_time.strftime("%Y/%m/%d %H:%M:%S"),
+            "endTIme": end_time.strftime("%Y/%m/%d %H:%M:%S"),
+            "country": row['zone']
+        })
+    print(data)
+    #response = requests.post(gas_url, params=params, json=data)
+    #print(f'Status Code: {response.status_code}, Response Text: {response.text}')
     return "Data sent to GAS", 200
